@@ -19,12 +19,14 @@ class MainActivity : FlutterActivity() {
 
 	override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
 		super.configureFlutterEngine(flutterEngine)
-		MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-			if (call.method == "requestEnableBluetooth") {
-				pendingResult = result
-				requestEnableBluetooth()
-			} else {
-				result.notImplemented()
+		flutterEngine.dartExecutor.binaryMessenger?.let { messenger ->
+			MethodChannel(messenger, CHANNEL).setMethodCallHandler { call, result ->
+				if (call.method == "requestEnableBluetooth") {
+					pendingResult = result
+					requestEnableBluetooth()
+				} else {
+					result.notImplemented()
+				}
 			}
 		}
 	}

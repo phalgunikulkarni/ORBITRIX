@@ -1,0 +1,511 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geocoding/geocoding.dart' hide Location;
+import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:location/location.dart';
+
+class RouteTrackingScreen extends StatefulWidget {
+  const RouteTrackingScreen({super.key});
+
+  @override
+  State<RouteTrackingScreen> createState() => _RouteTrackingScreenState();
+}
+
+class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
+  final TextEditingController _destinationController = TextEditingController();
+  final MapController _mapController = MapController();
+  LatLng _currentPosition = const LatLng(12.9716, 77.5946); // Default: Bangalore
+  LatLng? _destinationPosition;
+  List<LatLng> _routePoints = [];
+  List<String> _directions = [];
+  String? _eta;
+  String? _distance;
+  Timer? _locationUpdateTimer;
+  bool _isSearching = false;
+  int _currentDirectionIndex = 0;
+  double _bearing = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLocationUpdates();
+  }
+
+  @override
+  void dispose() {
+    _locationUpdateTimer?.cancel();
+    _destinationController.dispose();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  void _startLocationUpdates() {
+    // Update location every 2 seconds
+    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
+      await _updateCurrentLocation();
+      if (_destinationPosition != null) {
+        _updateNavigationProgress();
+      }
+    });
+    // Get initial location
+    _updateCurrentLocation();
+  }
+
+  Future<void> _updateCurrentLocation() async {
+    final location = Location();
+    try {
+      final userLocation = await location.getLocation();
+      if (!mounted) return;
+
+      final newPosition = LatLng(
+        userLocation.latitude ?? _currentPosition.latitude,
+        userLocation.longitude ?? _currentPosition.longitude,
+      );
+
+      // Calculate bearing for smooth rotation
+      if (_currentPosition != newPosition) {
+        _bearing = _calculateBearing(_currentPosition, newPosition);
+      }
+
+      setState(() {
+        _currentPosition = newPosition;
+      });
+
+      // If we have a destination, update the route
+      if (_destinationPosition != null) {
+        _updateRoute();
+        // Center and rotate map to follow current location
+        _mapController.move(_currentPosition, _mapController.zoom);
+        _mapController.rotate(_bearing);
+      }
+
+      // Center map on current location if no destination is set
+      if (_destinationPosition == null) {
+        _mapController.move(_currentPosition, 14);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error updating location: $e')),
+      );
+    }
+  }
+
+  double _calculateBearing(LatLng from, LatLng to) {
+    double lat1 = _toRadians(from.latitude);
+    double lon1 = _toRadians(from.longitude);
+    double lat2 = _toRadians(to.latitude);
+    double lon2 = _toRadians(to.longitude);
+
+    double dLon = lon2 - lon1;
+
+    double y = sin(dLon) * cos(lat2);
+    double x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon);
+
+    double bearing = atan2(y, x);
+    return (degrees(bearing) + 360) % 360;
+  }
+
+  double _toRadians(double degree) {
+    return degree * pi / 180;
+  }
+
+  double degrees(double rad) {
+    return rad * 180 / pi;
+  }
+
+  void _updateNavigationProgress() {
+    if (_routePoints.isEmpty || _directions.isEmpty) return;
+
+    // Find the closest point on route to current location
+    int closestPointIndex = _findClosestPointIndex();
+    
+    // Calculate progress and update directions
+    double distanceToNextTurn = _calculateDistance(
+      _currentPosition.latitude,
+      _currentPosition.longitude,
+      _routePoints[closestPointIndex].latitude,
+      _routePoints[closestPointIndex].longitude,
+    );
+
+    // Update current direction if we're close enough to the next turn point
+    if (distanceToNextTurn < 0.03) { // 30 meters threshold
+      setState(() {
+        if (_currentDirectionIndex < _directions.length - 1) {
+          _currentDirectionIndex++;
+          // Show turn notification
+          _showTurnNotification(_directions[_currentDirectionIndex]);
+        }
+      });
+    }
+  }
+
+  int _findClosestPointIndex() {
+    int closestIndex = 0;
+    double minDistance = double.infinity;
+
+    for (int i = 0; i < _routePoints.length; i++) {
+      double distance = _calculateDistance(
+        _currentPosition.latitude,
+        _currentPosition.longitude,
+        _routePoints[i].latitude,
+        _routePoints[i].longitude,
+      );
+
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestIndex = i;
+      }
+    }
+
+    return closestIndex;
+  }
+
+  void _showTurnNotification(String instruction) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          instruction,
+          style: const TextStyle(fontSize: 16),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.primary,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double earthRadius = 6371; // in kilometers
+    double dLat = _toRadians(lat2 - lat1);
+    double dLon = _toRadians(lon2 - lon1);
+    double a = sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(lat1)) *
+            cos(_toRadians(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+    double c = 2 * asin(sqrt(a));
+    return earthRadius * c;
+  }
+
+  Future<void> _searchDestination() async {
+    final address = _destinationController.text;
+    if (address.isEmpty) return;
+
+    setState(() => _isSearching = true);
+
+    try {
+      final locations = await locationFromAddress(address);
+      if (locations.isEmpty) {
+        throw Exception('No locations found');
+      }
+
+      final destination = LatLng(locations.first.latitude, locations.first.longitude);
+      setState(() {
+        _destinationPosition = destination;
+        _isSearching = false;
+      });
+
+      await _updateRoute();
+      _fitMapToBounds();
+    } catch (e) {
+      setState(() => _isSearching = false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error finding location: $e')),
+      );
+    }
+  }
+
+  Future<void> _updateRoute() async {
+    if (_destinationPosition == null) return;
+
+    try {
+      // Use OSRM service for routing
+      final response = await http.get(Uri.parse(
+        'https://router.project-osrm.org/route/v1/driving/'
+        '${_currentPosition.longitude},${_currentPosition.latitude};'
+        '${_destinationPosition!.longitude},${_destinationPosition!.latitude}'
+        '?overview=full&steps=true&annotations=true',
+      ));
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to calculate route');
+      }
+
+      final data = json.decode(response.body);
+      if (data['code'] != 'Ok') {
+        throw Exception(data['message'] ?? 'Route calculation failed');
+      }
+
+      final route = data['routes'][0];
+      final geometry = route['geometry'];
+      final legs = route['legs'] as List;
+      final steps = legs[0]['steps'] as List;
+      
+      // Decode polyline
+      final points = _decodePolyline(geometry);
+      
+      // Extract route information
+      final duration = (route['duration'] as num).toDouble();
+      final distance = (route['distance'] as num).toDouble();
+      
+      // Format directions
+      final directions = <String>[];
+      for (final step in steps) {
+        final maneuver = step['maneuver'] as Map<String, dynamic>;
+        final instruction = maneuver['text']?.toString() ?? 
+                          'Continue for ${_formatDistance((step['distance'] as num).toDouble())}';
+        directions.add(instruction);
+      }
+
+      setState(() {
+        _routePoints = points;
+        _directions = directions.cast<String>();
+        _distance = _formatDistance(distance);
+        _eta = _formatDuration(duration);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error calculating route: $e')),
+      );
+    }
+  }
+
+  List<LatLng> _decodePolyline(String encoded) {
+    List<LatLng> points = [];
+    int index = 0;
+    int len = encoded.length;
+    int lat = 0;
+    int lng = 0;
+
+    while (index < len) {
+      int b;
+      int shift = 0;
+      int result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+
+      points.add(LatLng(lat / 1e5, lng / 1e5));
+    }
+    return points;
+  }
+
+  String _formatDistance(double meters) {
+    if (meters >= 1000) {
+      return '${(meters / 1000).toStringAsFixed(1)} km';
+    }
+    return '${meters.round()} m';
+  }
+
+  String _formatDuration(double seconds) {
+    final duration = Duration(seconds: seconds.round());
+    final now = DateTime.now();
+    final arrival = now.add(duration);
+    return DateFormat('HH:mm').format(arrival);
+  }
+
+  void _fitMapToBounds() {
+    if (_destinationPosition == null) return;
+
+    // Create bounds that include both current position and destination
+    final bounds = LatLngBounds.fromPoints([_currentPosition, _destinationPosition!]);
+    _mapController.fitBounds(
+      bounds,
+      options: const FitBoundsOptions(padding: EdgeInsets.all(50.0)),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Route Tracking'),
+        centerTitle: true,
+      ),
+      body: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8.0),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _destinationController,
+                        decoration: const InputDecoration(
+                          hintText: 'Enter destination address',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _isSearching ? null : _searchDestination,
+                      child: _isSearching
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Search'),
+                    ),
+                  ],
+                ),
+                if (_eta != null && _distance != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.access_time, size: 16, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 4),
+                      Text('ETA: $_eta'),
+                      const SizedBox(width: 16),
+                      Icon(Icons.straight, size: 16, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 4),
+                      Text(_distance!),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _currentPosition,
+                initialZoom: 14,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.orbitrx',
+                ),
+                // Draw the route line
+                if (_routePoints.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: _routePoints,
+                        color: Colors.blue,
+                        strokeWidth: 4.0,
+                      ),
+                    ],
+                  ),
+                // Show markers
+                MarkerLayer(
+                  markers: [
+                    // Current location marker
+                    Marker(
+                      point: _currentPosition,
+                      child: const Icon(
+                        Icons.my_location,
+                        color: Colors.blue,
+                        size: 30,
+                      ),
+                    ),
+                    // Destination marker
+                    if (_destinationPosition != null)
+                      Marker(
+                        point: _destinationPosition!,
+                        child: const Icon(
+                          Icons.location_on,
+                          color: Colors.red,
+                          size: 30,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (_directions.isNotEmpty)
+            Container(
+              height: 100,
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: ListView.builder(
+                itemCount: _directions.length,
+                itemBuilder: (context, index) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 24,
+                          height: 24,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${index + 1}',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onPrimary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(_directions[index]),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}

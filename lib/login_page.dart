@@ -54,9 +54,12 @@ class _LoginPageState extends State<LoginPage> {
                     onPressed: () async {
                       if (!_formKey.currentState!.validate()) return;
 
+                      if (!mounted) return;
+                      final navigator = Navigator.of(context);
+
                       // Ask user to enable Bluetooth & GPS after login
                       final proceed = await showDialog<bool>(
-                        context: context,
+                        context: navigator.context,
                         builder: (c) => AlertDialog(
                           title: const Text('Enable Bluetooth & GPS'),
                           content: const Text(
@@ -75,13 +78,13 @@ class _LoginPageState extends State<LoginPage> {
                       if (proceed != true) return;
 
                       // Enable Bluetooth (requests permissions too)
-                      final btOk = await enableBluetooth(context);
+                      final btOk = await enableBluetooth(navigator);
 
                       // Check location permission / service for GPS
                       final locStatus = await Permission.locationWhenInUse.request();
-                      if (!locStatus.isGranted) {
+                      if (!locStatus.isGranted && mounted) {
                         await showDialog<void>(
-                          context: context,
+                          context: navigator.context,
                           builder: (c) => AlertDialog(
                             title: const Text('Location permission required'),
                             content: const Text(
@@ -96,9 +99,9 @@ class _LoginPageState extends State<LoginPage> {
                       }
 
                       // If Bluetooth and location are OK, proceed
+                      if (!mounted) return;
                       if (btOk && locStatus.isGranted) {
-                        Navigator.pushReplacement(
-                          context,
+                        navigator.pushReplacement(
                           MaterialPageRoute(
                               builder: (context) => const VehicleInfoPage()),
                         );

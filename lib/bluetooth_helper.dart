@@ -10,17 +10,22 @@ import 'platform_bluetooth.dart';
 /// Tries to programmatically enable Bluetooth when available, otherwise opens
 /// system Bluetooth settings as a fallback. Returns true when Bluetooth is ON
 /// and required permissions are granted; returns false otherwise.
-Future<bool> enableBluetooth(BuildContext context) async {
+Future<bool> enableBluetooth(NavigatorState navigator) async {
   // Ask the user if they want to enable Bluetooth now.
   final enable = await showDialog<bool>(
-    context: context,
-    builder: (c) => AlertDialog(
-      title: const Text('Enable Bluetooth'),
-      content: const Text('This app needs Bluetooth enabled. Would you like to enable it now?'),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Cancel')),
-        TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('Yes')),
-      ],
+    context: navigator.context,
+    barrierDismissible: false,
+    useRootNavigator: true,
+    builder: (c) => PopScope(
+      canPop: false,
+      child: AlertDialog(
+        title: const Text('Enable Bluetooth'),
+        content: const Text('This app needs Bluetooth enabled. Would you like to enable it now?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('Yes')),
+        ],
+      ),
     ),
   );
 
@@ -35,15 +40,24 @@ Future<bool> enableBluetooth(BuildContext context) async {
 
   final allGranted = statuses.values.every((s) => s.isGranted);
   if (!allGranted) {
+    // Use captured navigator in case the original context is disposed.
     await showDialog<void>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Permissions required'),
-        content: const Text('Bluetooth and location permissions are required to use this feature.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('OK')),
-        ],
-      ),
+      context: navigator.context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (c) {
+        final dialogNav = Navigator.of(c);
+        return AlertDialog(
+          title: const Text('Permissions required'),
+          content: const Text('Bluetooth and location permissions are required to use this feature.'),
+          actions: [
+            TextButton(
+              onPressed: () => dialogNav.pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
     );
     return false;
   }
@@ -58,13 +72,14 @@ Future<bool> enableBluetooth(BuildContext context) async {
     // If the platform prompt didn't enable Bluetooth, fall back to asking the
     // user to enable it manually and confirm.
     final confirmed = await showDialog<bool>(
-      context: context,
+      context: navigator.context,
+      barrierDismissible: false,
       builder: (c) => AlertDialog(
         title: const Text('Enable Bluetooth'),
         content: const Text('Please enable Bluetooth in your device settings, then tap "I enabled it".'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('I enabled it')),
+          TextButton(onPressed: () => navigator.pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => navigator.pop(true), child: const Text('I enabled it')),
         ],
       ),
     );

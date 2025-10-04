@@ -53,10 +53,10 @@ class _SplashScreenState extends State<SplashScreen>
       body: Stack(
         children: [
           // App Name at center
-          Center(
+          const Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
+              children: [
                 Text(
                   "V2V Safety App",
                   style: TextStyle(

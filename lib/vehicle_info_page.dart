@@ -28,10 +28,16 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
               DropdownButtonFormField<String>(
                 initialValue: _vehicleType,
                 decoration: const InputDecoration(labelText: "Vehicle Type"),
-                items: ["Car", "Bike"]
-                    .map((type) =>
-                        DropdownMenuItem(value: type, child: Text(type)))
-                    .toList(),
+                items: const <DropdownMenuItem<String>>[
+                  DropdownMenuItem<String>(
+                    value: "Car",
+                    child: Text("Car"),
+                  ),
+                  DropdownMenuItem<String>(
+                    value: "Bike",
+                    child: Text("Bike"),
+                  ),
+                ],
                 onChanged: (val) => setState(() => _vehicleType = val!),
               ),
               TextFormField(
@@ -56,7 +62,7 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(
-                          builder: (context) => DashboardScreen()),
+                          builder: (context) => const DashboardScreen()),
                     );
                   }
                 },
