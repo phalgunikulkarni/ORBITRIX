@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
+import 'services/proximity_alert_service.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geocoding/geocoding.dart' hide Location;
 import 'package:http/http.dart' as http;
@@ -20,6 +22,8 @@ class RouteTrackingScreen extends StatefulWidget {
 class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   final TextEditingController _destinationController = TextEditingController();
   final MapController _mapController = MapController();
+  final ProximityAlertService _proximityService = ProximityAlertService();
+  
   LatLng _currentPosition = const LatLng(12.9716, 77.5946); // Default: Bangalore
   LatLng? _destinationPosition;
   List<LatLng> _routePoints = [];
@@ -30,11 +34,80 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   bool _isSearching = false;
   int _currentDirectionIndex = 0;
   double _bearing = 0.0;
+  List<DetectedDevice> _nearbyDevices = [];
+
+  IconData _getDirectionIcon(String direction) {
+    final lowerDirection = direction.toLowerCase();
+    if (lowerDirection.contains('left')) {
+      return Icons.turn_left;
+    } else if (lowerDirection.contains('right')) {
+      return Icons.turn_right;
+    } else if (lowerDirection.contains('u-turn') || lowerDirection.contains('uturn')) {
+      return Icons.u_turn_left;
+    } else if (lowerDirection.contains('merge') || lowerDirection.contains('exit')) {
+      return Icons.merge;
+    } else if (lowerDirection.contains('continue') || lowerDirection.contains('straight')) {
+      return Icons.straight;
+    } else {
+      return Icons.navigation;
+    }
+  }
+
+  String _getSimplifiedDirection(String direction) {
+    final lowerDirection = direction.toLowerCase();
+    if (lowerDirection.contains('left')) {
+      return 'Turn Left';
+    } else if (lowerDirection.contains('right')) {
+      return 'Turn Right';
+    } else if (lowerDirection.contains('u-turn') || lowerDirection.contains('uturn')) {
+      return 'Make U-Turn';
+    } else if (lowerDirection.contains('merge')) {
+      return 'Merge';
+    } else if (lowerDirection.contains('exit')) {
+      return 'Take Exit';
+    } else if (lowerDirection.contains('continue') || lowerDirection.contains('straight')) {
+      return 'Continue Straight';
+    } else {
+      return direction;
+    }
+  }
+
+  Future<bool> _checkAndRequestPermissions() async {
+    // Check and request Bluetooth permissions
+    Map<ph.Permission, ph.PermissionStatus> statuses = await [
+      ph.Permission.bluetooth,
+      ph.Permission.bluetoothScan,
+      ph.Permission.bluetoothConnect,
+      ph.Permission.location,
+    ].request();
+
+    bool allGranted = true;
+    statuses.forEach((permission, status) {
+      if (status != ph.PermissionStatus.granted) {
+        allGranted = false;
+      }
+    });
+
+    if (!allGranted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Bluetooth and Location permissions are required for vehicle detection'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+
+    return allGranted;
+  }
 
   @override
   void initState() {
     super.initState();
     _startLocationUpdates();
+    // Only request permissions initially, don't start scanning yet
+    _checkAndRequestPermissions();
   }
 
   @override
@@ -42,6 +115,7 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     _locationUpdateTimer?.cancel();
     _destinationController.dispose();
     _mapController.dispose();
+    _proximityService.dispose();
     super.dispose();
   }
 
@@ -210,6 +284,17 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
 
       await _updateRoute();
       _fitMapToBounds();
+
+      // Start BLE scanning after destination is set
+      if (await _checkAndRequestPermissions()) {
+        _proximityService.startScanning(context);
+        // Listen to nearby devices
+        _proximityService.nearbyVehicles.listen((devices) {
+          setState(() {
+            _nearbyDevices = devices;
+          });
+        });
+      }
     } catch (e) {
       setState(() => _isSearching = false);
       if (!mounted) return;
@@ -412,6 +497,56 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                       urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.example.orbitrx',
                     ),
+                    // Vehicle markers layer
+                    MarkerLayer(
+                      markers: [
+                        // Detected device markers (only for moving vehicles)
+                        ..._nearbyDevices.where((device) => device.isMoving).map((device) {
+                          // Calculate approximate position based on distance and movement
+                          final angle = Random().nextDouble() * 2 * pi;
+                          final lat = _currentPosition.latitude + 
+                              (device.distance * cos(angle)) / 111111;
+                          final lng = _currentPosition.longitude + 
+                              (device.distance * sin(angle)) / (111111 * cos(_currentPosition.latitude * pi / 180));
+                          
+                          return Marker(
+                            point: LatLng(lat, lng),
+                            width: 30,
+                            height: 30,
+                            child: GestureDetector(
+                              onTap: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'Moving Vehicle Detected\n'
+                                      'Name: ${device.device.platformName}\n'
+                                      'Distance: ${device.distance.toStringAsFixed(1)}m\n'
+                                      'Signal Strength: ${device.rssi} dBm'
+                                    ),
+                                    duration: const Duration(seconds: 2),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: device.distance >= 1.0 && device.distance <= 2.0
+                                      ? Colors.red.withOpacity(0.7)
+                                      : Colors.orange.withOpacity(0.7),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2),
+                                ),
+                                child: const Icon(
+                                  Icons.directions_car,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                    ),
+                    // Route polyline layer
                     if (_routePoints.isNotEmpty)
                       PolylineLayer(
                         polylines: [
@@ -422,20 +557,10 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                           ),
                         ],
                       ),
-                    MarkerLayer(
-                      markers: [
-                        Marker(
-                          point: _currentPosition,
-                          child: Transform.rotate(
-                            angle: _bearing * pi / 180,
-                            child: const Icon(
-                              Icons.navigation,
-                              color: Colors.blue,
-                              size: 30,
-                            ),
-                          ),
-                        ),
-                        if (_destinationPosition != null)
+                    // Destination marker layer
+                    if (_destinationPosition != null)
+                      MarkerLayer(
+                        markers: [
                           Marker(
                             point: _destinationPosition!,
                             child: const Icon(
@@ -444,6 +569,24 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                               size: 30,
                             ),
                           ),
+                        ],
+                      ),
+                    // Current location marker layer (on top)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _currentPosition,
+                          width: 40,
+                          height: 40,
+                          child: Transform.rotate(
+                            angle: _bearing * (pi / 180),
+                            child: const Icon(
+                              Icons.navigation,
+                              color: Colors.blue,
+                              size: 30,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -452,40 +595,69 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                 Positioned(
                   right: 16,
                   bottom: 16,
-                  child: FloatingActionButton(
-                    onPressed: () {
-                      _mapController.move(_currentPosition, 22); // Maximum zoom level for highest magnification
-                      _mapController.rotate(_bearing);
-                    },
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    child: const Icon(Icons.my_location, color: Colors.white),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FloatingActionButton(
+                        heroTag: 'proximity',
+                        onPressed: () {
+                          _proximityService.startScanning(context);
+                        },
+                        backgroundColor: Colors.red,
+                        child: const Icon(Icons.bluetooth_searching, color: Colors.white),
+                      ),
+                      const SizedBox(height: 8),
+                      FloatingActionButton(
+                        heroTag: 'location',
+                        onPressed: () {
+                          _mapController.move(_currentPosition, 22); // Maximum zoom level for highest magnification
+                          _mapController.rotate(_bearing);
+                        },
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        child: const Icon(Icons.my_location, color: Colors.white),
+                      ),
+                    ],
                   ),
                 ),
                 if (_directions.isNotEmpty)
                   Positioned(
-                    top: 16,
-                    left: 16,
-                    right: 16,
-                    child: Card(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
                       color: Theme.of(context).colorScheme.primary,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: SafeArea(
                         child: Row(
                           children: [
-                            const Icon(
-                              Icons.directions,
+                            Icon(
+                              _getDirectionIcon(_directions[_currentDirectionIndex]),
                               color: Colors.white,
-                              size: 24,
+                              size: 32,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
-                              child: Text(
-                                _directions[_currentDirectionIndex],
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text(
+                                    'Next Turn',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _getSimplifiedDirection(_directions[_currentDirectionIndex]),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -496,65 +668,6 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
               ],
             ),
           ),
-          if (_directions.isNotEmpty)
-            Container(
-              height: 120,
-              padding: const EdgeInsets.symmetric(vertical: 8.0),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.2),
-                    blurRadius: 4,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-              ),
-              child: ListView.builder(
-                itemCount: _directions.length,
-                itemBuilder: (context, index) {
-                  final isCurrentStep = index == _currentDirectionIndex;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    color: isCurrentStep ? Theme.of(context).colorScheme.primaryContainer : null,
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 24,
-                          height: 24,
-                          decoration: BoxDecoration(
-                            color: isCurrentStep
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.surfaceVariant,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Center(
-                            child: Text(
-                              '${index + 1}',
-                              style: TextStyle(
-                                color: isCurrentStep
-                                    ? Theme.of(context).colorScheme.onPrimary
-                                    : Theme.of(context).colorScheme.onSurfaceVariant,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _directions[index],
-                            style: TextStyle(
-                              fontWeight: isCurrentStep ? FontWeight.bold : FontWeight.normal,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
         ],
       ),
     );
