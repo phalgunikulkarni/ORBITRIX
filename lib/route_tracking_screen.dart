@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'services/proximity_alert_service.dart';
+import 'services/smart_collision_detection_service.dart';
+import 'services/traffic_congestion_detection_service.dart';
 import 'models/place_model.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geocoding/geocoding.dart' hide Location;
@@ -35,9 +37,16 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   String? _distance;
   Timer? _locationUpdateTimer;
   bool _isSearching = false;
+  bool _isNavigationStarted = false;
   int _currentDirectionIndex = 0;
   double _bearing = 0.0;
   List<DetectedDevice> _nearbyDevices = [];
+  List<DetectedVehicle> _smartDetectedVehicles = [];
+  List<RouteSegment> _trafficSegments = [];
+
+  // Services
+  final SmartCollisionDetectionService _smartCollisionService = SmartCollisionDetectionService();
+  final TrafficCongestionDetectionService _trafficService = TrafficCongestionDetectionService();
 
   // Google Places API Key
   final String _googleApiKey = 'AIzaSyCx8UgZDXtJ-w9RoIl2-QHn8FEl3wtch5o';
@@ -61,6 +70,48 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     }
   }
 
+  Color _getHighestRiskColor() {
+    if (_smartDetectedVehicles.isEmpty) return Colors.green;
+    
+    final highestRisk = _smartDetectedVehicles
+        .map((v) => v.collisionMetrics?.riskLevel ?? CollisionRisk.none)
+        .reduce((a, b) => a.index > b.index ? a : b);
+    
+    switch (highestRisk) {
+      case CollisionRisk.critical:
+        return Colors.red.shade900;
+      case CollisionRisk.high:
+        return Colors.red;
+      case CollisionRisk.medium:
+        return Colors.orange.shade700;
+      case CollisionRisk.low:
+        return Colors.yellow.shade700;
+      default:
+        return Colors.green;
+    }
+  }
+
+  IconData _getHighestRiskIcon() {
+    if (_smartDetectedVehicles.isEmpty) return Icons.shield;
+    
+    final highestRisk = _smartDetectedVehicles
+        .map((v) => v.collisionMetrics?.riskLevel ?? CollisionRisk.none)
+        .reduce((a, b) => a.index > b.index ? a : b);
+    
+    switch (highestRisk) {
+      case CollisionRisk.critical:
+        return Icons.dangerous;
+      case CollisionRisk.high:
+        return Icons.warning;
+      case CollisionRisk.medium:
+        return Icons.warning_amber;
+      case CollisionRisk.low:
+        return Icons.info;
+      default:
+        return Icons.shield;
+    }
+  }
+
   String _getSimplifiedDirection(String direction) {
     final lowerDirection = direction.toLowerCase();
     if (lowerDirection.contains('left')) {
@@ -77,6 +128,66 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
       return 'Continue Straight';
     } else {
       return direction;
+    }
+  }
+
+  // Traffic status helper methods
+  Color _getWorstTrafficColor() {
+    if (_trafficSegments.isEmpty) return Colors.green;
+    
+    TrafficCongestionLevel worstLevel = TrafficCongestionLevel.free;
+    for (final segment in _trafficSegments) {
+      if (segment.congestionLevel.index > worstLevel.index) {
+        worstLevel = segment.congestionLevel;
+      }
+    }
+    
+    switch (worstLevel) {
+      case TrafficCongestionLevel.free:
+        return Colors.green;
+      case TrafficCongestionLevel.light:
+        return Colors.yellow.shade700;
+      case TrafficCongestionLevel.moderate:
+        return Colors.orange;
+      case TrafficCongestionLevel.heavy:
+        return Colors.red;
+      case TrafficCongestionLevel.gridlock:
+        return Colors.red.shade900;
+    }
+  }
+
+  String _getTrafficStatusText() {
+    if (_trafficSegments.isEmpty) return 'No traffic data';
+    
+    final congestionCounts = <TrafficCongestionLevel, int>{};
+    
+    for (final segment in _trafficSegments) {
+      congestionCounts[segment.congestionLevel] = 
+          (congestionCounts[segment.congestionLevel] ?? 0) + 1;
+    }
+    
+    // Find the most common congestion level
+    TrafficCongestionLevel mostCommon = TrafficCongestionLevel.free;
+    int maxCount = 0;
+    
+    congestionCounts.forEach((level, count) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommon = level;
+      }
+    });
+    
+    switch (mostCommon) {
+      case TrafficCongestionLevel.free:
+        return 'Traffic flowing freely';
+      case TrafficCongestionLevel.light:
+        return 'Light traffic ahead';
+      case TrafficCongestionLevel.moderate:
+        return 'Moderate congestion';
+      case TrafficCongestionLevel.heavy:
+        return 'Heavy traffic ahead';
+      case TrafficCongestionLevel.gridlock:
+        return 'Severe congestion!';
     }
   }
 
@@ -167,6 +278,8 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     _destinationController.dispose();
     _mapController.dispose();
     _proximityService.dispose();
+    _smartCollisionService.dispose();
+    _trafficService.dispose();
     super.dispose();
   }
 
@@ -304,6 +417,19 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     // Direction alerts are now shown in the top bar only
   }
 
+  // Method to create traffic congestion polylines
+  List<Polyline> _buildTrafficPolylines() {
+    if (_trafficSegments.isEmpty) return [];
+    
+    return _trafficSegments.map((segment) {
+      return Polyline(
+        points: segment.segmentPoints,
+        color: segment.routeColor,
+        strokeWidth: segment.congestionLevel == TrafficCongestionLevel.gridlock ? 8.0 : 6.0,
+      );
+    }).toList();
+  }
+
   Future<void> _searchDestination() async {
     final address = _destinationController.text;
     if (address.isEmpty) return;
@@ -325,17 +451,6 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
 
       await _updateRoute();
       _fitMapToBounds();
-
-      // Start BLE scanning after destination is set
-      if (await _checkAndRequestPermissions()) {
-        _proximityService.startScanning(context);
-        // Listen to nearby devices
-        _proximityService.nearbyVehicles.listen((devices) {
-          setState(() {
-            _nearbyDevices = devices;
-          });
-        });
-      }
     } catch (e) {
       setState(() => _isSearching = false);
       if (!mounted) return;
@@ -364,19 +479,87 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
 
       await _updateRoute();
       _fitMapToBounds();
-
-      if (await _checkAndRequestPermissions()) {
-        _proximityService.startScanning(context);
-        _proximityService.nearbyVehicles.listen((devices) {
-          setState(() => _nearbyDevices = devices);
-        });
-      }
     } catch (e) {
       setState(() => _isSearching = false);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error selecting place: $e')),
       );
+    }
+  }
+
+  Future<void> _startNavigation() async {
+    if (_destinationPosition == null) return;
+    
+    setState(() {
+      _isNavigationStarted = true;
+    });
+    
+    try {
+      // Recenter map to current location
+      _mapController.move(_currentPosition, 18);
+      _mapController.rotate(_bearing);
+      
+      // Start Smart Collision Detection
+      if (await _checkAndRequestPermissions()) {
+        // Start both detection systems
+        _proximityService.startScanning(context);
+        _smartCollisionService.startSmartDetection(context);
+        
+        // Listen to old proximity devices
+        _proximityService.nearbyVehicles.listen((devices) {
+          setState(() {
+            _nearbyDevices = devices;
+          });
+        });
+        
+        // Listen to smart collision detection
+        _smartCollisionService.detectedVehicles.listen((vehicles) {
+          setState(() {
+            _smartDetectedVehicles = vehicles;
+          });
+        });
+        
+        // Start traffic congestion detection if we have route points
+        if (_routePoints.isNotEmpty) {
+          await _trafficService.startTrafficDetection(_routePoints);
+          
+          // Listen to traffic updates
+          _trafficService.trafficData.listen((segments) {
+            setState(() {
+              _trafficSegments = segments;
+            });
+          });
+        }
+      }
+      
+      // Start location updates for real-time tracking
+      _startLocationUpdates();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.play_arrow, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Navigation started! Collision detection active.'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isNavigationStarted = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error starting navigation: $e')),
+        );
+      }
     }
   }
 
@@ -558,6 +741,118 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                     ],
                   ),
                 ],
+                // START Navigation Button
+                if (_destinationPosition != null && !_isNavigationStarted) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _startNavigation,
+                      icon: const Icon(Icons.play_arrow, color: Colors.white),
+                      label: const Text(
+                        'START NAVIGATION',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                // Navigation Active Status
+                if (_isNavigationStarted) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.green,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.navigation, size: 16, color: Colors.white),
+                        SizedBox(width: 6),
+                        Text(
+                          'Navigation Active',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                // Smart Collision Detection Status
+                if (_smartDetectedVehicles.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _getHighestRiskColor(),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _getHighestRiskIcon(),
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_smartDetectedVehicles.length} vehicle(s) detected',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                // Traffic Congestion Status
+                if (_trafficSegments.isNotEmpty && _isNavigationStarted) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _getWorstTrafficColor(),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.traffic,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _getTrafficStatusText(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -607,7 +902,60 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                     // Vehicle markers layer
                     MarkerLayer(
                       markers: [
-                        // Only show markers for vehicles within 5 meters
+                        // Smart collision detection markers (high priority)
+                        ..._smartDetectedVehicles.where((vehicle) => 
+                          vehicle.collisionMetrics != null && 
+                          vehicle.collisionMetrics!.riskLevel.index >= 1 // Low risk and above
+                        ).map((vehicle) {
+                          final angle = Random().nextDouble() * 2 * pi;
+                          final lat = _currentPosition.latitude + 
+                              (vehicle.distance * cos(angle)) / 111111;
+                          final lng = _currentPosition.longitude + 
+                              (vehicle.distance * sin(angle)) / (111111 * cos(_currentPosition.latitude * pi / 180));
+                          
+                          Color markerColor = Colors.yellow;
+                          IconData markerIcon = Icons.warning;
+                          
+                          switch (vehicle.collisionMetrics!.riskLevel) {
+                            case CollisionRisk.critical:
+                              markerColor = Colors.red.shade900;
+                              markerIcon = Icons.dangerous;
+                              break;
+                            case CollisionRisk.high:
+                              markerColor = Colors.red;
+                              markerIcon = Icons.warning;
+                              break;
+                            case CollisionRisk.medium:
+                              markerColor = Colors.orange;
+                              markerIcon = Icons.warning_amber;
+                              break;
+                            case CollisionRisk.low:
+                              markerColor = Colors.yellow.shade700;
+                              markerIcon = Icons.info;
+                              break;
+                            default:
+                              break;
+                          }
+                          
+                          return Marker(
+                            point: LatLng(lat, lng),
+                            width: 40,
+                            height: 40,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: markerColor,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: Icon(
+                                markerIcon,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                          );
+                        }),
+                        // Legacy proximity markers (lower priority)
                         ..._nearbyDevices.where((device) => 
                           device.isMoving && device.distance <= 5.0
                         ).map((device) {
@@ -679,11 +1027,14 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                     if (_routePoints.isNotEmpty)
                       PolylineLayer(
                         polylines: [
+                          // Base route line
                           Polyline(
                             points: _routePoints,
-                            color: Colors.blue,
-                            strokeWidth: 4.0,
+                            color: Colors.blue.withOpacity(0.5),
+                            strokeWidth: 3.0,
                           ),
+                          // Traffic congestion segments (on top)
+                          ..._buildTrafficPolylines(),
                         ],
                       ),
                     // Destination marker layer
@@ -724,28 +1075,14 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                 Positioned(
                   right: 16,
                   bottom: 16,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      FloatingActionButton(
-                        heroTag: 'proximity',
-                        onPressed: () {
-                          _proximityService.startScanning(context);
-                        },
-                        backgroundColor: Colors.red,
-                        child: const Icon(Icons.bluetooth_searching, color: Colors.white),
-                      ),
-                      const SizedBox(height: 8),
-                      FloatingActionButton(
-                        heroTag: 'location',
-                        onPressed: () {
-                          _mapController.move(_currentPosition, 22); // Maximum zoom level for highest magnification
-                          _mapController.rotate(_bearing);
-                        },
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        child: const Icon(Icons.my_location, color: Colors.white),
-                      ),
-                    ],
+                  child: FloatingActionButton(
+                    heroTag: 'location',
+                    onPressed: () {
+                      _mapController.move(_currentPosition, 18); // Recenter to current location
+                      _mapController.rotate(_bearing);
+                    },
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    child: const Icon(Icons.my_location, color: Colors.white),
                   ),
                 ),
                 if (_directions.isNotEmpty)
