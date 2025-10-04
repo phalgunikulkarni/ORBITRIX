@@ -8,6 +8,8 @@ import 'services/proximity_alert_service.dart';
 import 'services/smart_collision_detection_service.dart';
 import 'services/traffic_congestion_detection_service.dart';
 import 'models/place_model.dart';
+import 'theme/app_theme.dart';
+import 'widgets/modern_widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geocoding/geocoding.dart' hide Location;
 import 'package:http/http.dart' as http;
@@ -70,8 +72,12 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     }
   }
 
-  Color _getHighestRiskColor() {
-    if (_smartDetectedVehicles.isEmpty) return Colors.green;
+  LinearGradient _getHighestRiskGradient() {
+    if (_smartDetectedVehicles.isEmpty) {
+      return const LinearGradient(
+        colors: [Color(0xFF10B981), Color(0xFF059669)],
+      );
+    }
     
     final highestRisk = _smartDetectedVehicles
         .map((v) => v.collisionMetrics?.riskLevel ?? CollisionRisk.none)
@@ -79,15 +85,25 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     
     switch (highestRisk) {
       case CollisionRisk.critical:
-        return Colors.red.shade900;
+        return const LinearGradient(
+          colors: [Color(0xFF991B1B), Color(0xFF7F1D1D)],
+        );
       case CollisionRisk.high:
-        return Colors.red;
+        return const LinearGradient(
+          colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
+        );
       case CollisionRisk.medium:
-        return Colors.orange.shade700;
+        return const LinearGradient(
+          colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+        );
       case CollisionRisk.low:
-        return Colors.yellow.shade700;
+        return const LinearGradient(
+          colors: [Color(0xFFFBBF24), Color(0xFFF59E0B)],
+        );
       default:
-        return Colors.green;
+        return const LinearGradient(
+          colors: [Color(0xFF10B981), Color(0xFF059669)],
+        );
     }
   }
 
@@ -132,8 +148,12 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   }
 
   // Traffic status helper methods
-  Color _getWorstTrafficColor() {
-    if (_trafficSegments.isEmpty) return Colors.green;
+  LinearGradient _getWorstTrafficGradient() {
+    if (_trafficSegments.isEmpty) {
+      return const LinearGradient(
+        colors: [Color(0xFF10B981), Color(0xFF059669)],
+      );
+    }
     
     TrafficCongestionLevel worstLevel = TrafficCongestionLevel.free;
     for (final segment in _trafficSegments) {
@@ -144,15 +164,25 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     
     switch (worstLevel) {
       case TrafficCongestionLevel.free:
-        return Colors.green;
+        return const LinearGradient(
+          colors: [Color(0xFF10B981), Color(0xFF059669)],
+        );
       case TrafficCongestionLevel.light:
-        return Colors.yellow.shade700;
+        return const LinearGradient(
+          colors: [Color(0xFFFBBF24), Color(0xFFF59E0B)],
+        );
       case TrafficCongestionLevel.moderate:
-        return Colors.orange;
+        return const LinearGradient(
+          colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
+        );
       case TrafficCongestionLevel.heavy:
-        return Colors.red;
+        return const LinearGradient(
+          colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
+        );
       case TrafficCongestionLevel.gridlock:
-        return Colors.red.shade900;
+        return const LinearGradient(
+          colors: [Color(0xFF991B1B), Color(0xFF7F1D1D)],
+        );
     }
   }
 
@@ -679,211 +709,151 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Route Tracking'),
-        centerTitle: true,
-      ),
-      body: Column(
+      appBar: null,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFFF8FAFC),
+              Color(0xFFE2E8F0),
+              Color(0xFFF1F5F9),
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
         children: [
+          // Compact search and status bar
           Container(
-            padding: const EdgeInsets.all(8.0),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              boxShadow: [
+            margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: GlassMorphismCard(
+              padding: const EdgeInsets.all(12),
+              blur: 10,
+              opacity: 0.12,
+              shadows: [
                 BoxShadow(
-                  color: Colors.grey.withOpacity(0.2),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
+                  color: const Color(0xFF667EEA).withOpacity(0.08),
+                  blurRadius: 15,
+                  offset: const Offset(0, 4),
                 ),
               ],
-            ),
-            child: Column(
+              child: Column(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _destinationController,
-                        decoration: const InputDecoration(
-                          hintText: 'Enter destination address',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        ),
-                        onSubmitted: (_) => _searchDestination(),
-                        // Autocomplete is handled by the controller listener (debounced)
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _isSearching ? null : _searchDestination,
-                      child: _isSearching
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Search'),
-                    ),
-                  ],
-                ),
-                if (_eta != null && _distance != null) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.access_time, size: 16, color: Theme.of(context).colorScheme.primary),
-                      const SizedBox(width: 4),
-                      Text('ETA: $_eta'),
-                      const SizedBox(width: 16),
-                      Icon(Icons.straight, size: 16, color: Theme.of(context).colorScheme.primary),
-                      const SizedBox(width: 4),
-                      Text(_distance!),
-                    ],
-                  ),
-                ],
-                // START Navigation Button
-                if (_destinationPosition != null && !_isNavigationStarted) ...[
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _startNavigation,
-                      icon: const Icon(Icons.play_arrow, color: Colors.white),
-                      label: const Text(
-                        'START NAVIGATION',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
+                ModernSearchField(
+                  controller: _destinationController,
+                  hintText: 'Enter destination address',
+                  isLoading: _isSearching,
+                  onSubmitted: _searchDestination,
+                  suggestions: _searchResults.take(5).map((result) => 
+                    ListTile(
+                      leading: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
+                          ),
                           borderRadius: BorderRadius.circular(8),
                         ),
+                        child: const Icon(Icons.location_on, color: Colors.white, size: 20),
                       ),
+                      title: Text(
+                        result.name,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        result.displayName,
+                        style: TextStyle(color: Colors.grey.shade600),
+                      ),
+                      onTap: () => _selectPrediction(result),
                     ),
-                  ),
-                ],
-                // Navigation Active Status
-                if (_isNavigationStarted) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.green,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.navigation, size: 16, color: Colors.white),
-                        SizedBox(width: 6),
-                        Text(
-                          'Navigation Active',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
+                  ).toList(),
+                ),
+                // Control buttons row - side by side
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // START/Navigation Status Button
+                    if (_destinationPosition != null && !_isNavigationStarted)
+                      PremiumButton(
+                        onPressed: _startNavigation,
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF10B981), Color(0xFF059669)],
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-                // Smart Collision Detection Status
-                if (_smartDetectedVehicles.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _getHighestRiskColor(),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _getHighestRiskIcon(),
-                          size: 16,
-                          color: Colors.white,
+                        elevation: 6,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.navigation, color: Colors.white, size: 14),
+                            const SizedBox(width: 6),
+                            const Text('START', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${_smartDetectedVehicles.length} vehicle(s) detected',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
+                      ),
+                    
+                    // Navigation Active Status
+                    if (_isNavigationStarted)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]),
+                          borderRadius: BorderRadius.circular(16),
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-                // Traffic Congestion Status
-                if (_trafficSegments.isNotEmpty && _isNavigationStarted) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _getWorstTrafficColor(),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.traffic,
-                          size: 16,
-                          color: Colors.white,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.navigation, size: 14, color: Colors.white),
+                            const SizedBox(width: 6),
+                            const Text('ACTIVE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          _getTrafficStatusText(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
+                      ),
+                    
+                    // Collision/Traffic Status Indicators
+                    if (_smartDetectedVehicles.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          gradient: _getHighestRiskGradient(),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                      ],
-                    ),
-                  ),
-                ],
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(_getHighestRiskIcon(), size: 12, color: Colors.white),
+                            const SizedBox(width: 4),
+                            Text('${_smartDetectedVehicles.length}', 
+                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    
+                    if (_trafficSegments.isNotEmpty && _isNavigationStarted)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          gradient: _getWorstTrafficGradient(),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.traffic, size: 14, color: Colors.white),
+                            const SizedBox(width: 6),
+                            const Text('Traffic', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ],
             ),
-          ),
-          // Search results dropdown
-          if (_searchResults.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var place in _searchResults.take(5)) // Limit to 5 suggestions
-                    ListTile(
-                      title: Text(place.name),
-                      subtitle: Text(place.displayName),
-                      onTap: () => _selectPrediction(place),
-                      dense: true,
-                    ),
-                ],
-              ),
             ),
+          ),
+
           Expanded(
             child: Stack(
               children: [
@@ -1136,6 +1106,8 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
             ),
           ),
         ],
+        ),
+        ),
       ),
     );
   }
