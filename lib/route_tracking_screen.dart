@@ -5,12 +5,14 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'services/proximity_alert_service.dart';
+import 'models/place_model.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geocoding/geocoding.dart' hide Location;
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart';
+import 'services/google_places_service.dart';
 
 class RouteTrackingScreen extends StatefulWidget {
   const RouteTrackingScreen({super.key});
@@ -25,6 +27,7 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   final ProximityAlertService _proximityService = ProximityAlertService();
   
   LatLng _currentPosition = const LatLng(12.9716, 77.5946); // Default: Bangalore
+  List<Place> _searchResults = [];
   LatLng? _destinationPosition;
   List<LatLng> _routePoints = [];
   List<String> _directions = [];
@@ -35,6 +38,11 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   int _currentDirectionIndex = 0;
   double _bearing = 0.0;
   List<DetectedDevice> _nearbyDevices = [];
+
+  // Google Places API Key
+  final String _googleApiKey = 'AIzaSyCx8UgZDXtJ-w9RoIl2-QHn8FEl3wtch5o';
+  late final GooglePlacesService _placesService;
+  Timer? _searchDebounce;
 
   IconData _getDirectionIcon(String direction) {
     final lowerDirection = direction.toLowerCase();
@@ -108,6 +116,49 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     _startLocationUpdates();
     // Only request permissions initially, don't start scanning yet
     _checkAndRequestPermissions();
+    // Initialize Google Places
+    _placesService = GooglePlacesService(_googleApiKey);
+
+    // Listen to destination input and fetch suggestions with debounce
+    _destinationController.addListener(() {
+      _searchDebounce?.cancel();
+      _searchDebounce = Timer(const Duration(milliseconds: 300), () async {
+        final text = _destinationController.text;
+        if (text.isEmpty) {
+          setState(() => _searchResults = []);
+          return;
+        }
+
+        try {
+          print('Searching for: $text at ${_currentPosition.latitude}, ${_currentPosition.longitude}');
+          final preds = await _placesService.autocomplete(
+            text,
+            lat: _currentPosition.latitude,
+            lng: _currentPosition.longitude,
+            radius: 50000, // 50km bias
+          );
+
+          print('Found ${preds.length} suggestions: ${preds.map((p) => p.description).toList()}');
+          
+          setState(() {
+            _searchResults = preds
+                .map((p) => Place(
+                      placeId: p.placeId,
+                      name: p.description,
+                      displayName: p.description,
+                      latitude: 0.0,
+                      longitude: 0.0,
+                    ))
+                .toList();
+          });
+          
+          print('_searchResults length: ${_searchResults.length}');
+        } catch (e) {
+          print('Google Places error: $e');
+          setState(() => _searchResults = []);
+        }
+      });
+    });
   }
 
   @override
@@ -129,6 +180,32 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     });
     // Get initial location
     _updateCurrentLocation();
+  }
+
+  void _updateNavigationProgress() {
+    if (_routePoints.isEmpty || _directions.isEmpty) return;
+
+    // Find the closest point on route
+    int closestPointIndex = _findClosestPointIndex();
+    
+    // Calculate distance to next turn point
+    double distanceToNextTurn = _calculateDistance(
+      _currentPosition.latitude,
+      _currentPosition.longitude,
+      _routePoints[closestPointIndex].latitude,
+      _routePoints[closestPointIndex].longitude,
+    );
+
+    // Update current direction if we're close enough to the next turn point
+    if (distanceToNextTurn < 0.03) { // 30 meters threshold
+      setState(() {
+        if (_currentDirectionIndex < _directions.length - 1) {
+          _currentDirectionIndex++;
+          // Show turn notification
+          _showTurnNotification(_directions[_currentDirectionIndex]);
+        }
+      });
+    }
   }
 
   Future<void> _updateCurrentLocation() async {
@@ -163,32 +240,6 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error updating location: $e')),
       );
-    }
-  }
-
-  void _updateNavigationProgress() {
-    if (_routePoints.isEmpty || _directions.isEmpty) return;
-
-    // Find the closest point on route
-    int closestPointIndex = _findClosestPointIndex();
-    
-    // Calculate distance to next turn point
-    double distanceToNextTurn = _calculateDistance(
-      _currentPosition.latitude,
-      _currentPosition.longitude,
-      _routePoints[closestPointIndex].latitude,
-      _routePoints[closestPointIndex].longitude,
-    );
-
-    // Update current direction if we're close enough to the next turn point
-    if (distanceToNextTurn < 0.03) { // 30 meters threshold
-      setState(() {
-        if (_currentDirectionIndex < _directions.length - 1) {
-          _currentDirectionIndex++;
-          // Show turn notification
-          _showTurnNotification(_directions[_currentDirectionIndex]);
-        }
-      });
     }
   }
 
@@ -290,6 +341,41 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error finding location: $e')),
+      );
+    }
+  }
+
+  // When user selects a prediction, fetch place details and set destination
+  Future<void> _selectPrediction(Place prediction) async {
+    setState(() => _isSearching = true);
+
+    try {
+          final detail = await _placesService.getPlaceDetail(prediction.placeId);
+      if (detail == null) throw Exception('Failed to get place details');
+
+      final destination = LatLng(detail.lat, detail.lng);
+      setState(() {
+        _destinationController.text = detail.name;
+            _searchResults = [];
+        _isSearching = false;
+        _destinationPosition = destination;
+        _currentDirectionIndex = 0;
+      });
+
+      await _updateRoute();
+      _fitMapToBounds();
+
+      if (await _checkAndRequestPermissions()) {
+        _proximityService.startScanning(context);
+        _proximityService.nearbyVehicles.listen((devices) {
+          setState(() => _nearbyDevices = devices);
+        });
+      }
+    } catch (e) {
+      setState(() => _isSearching = false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error selecting place: $e')),
       );
     }
   }
@@ -405,6 +491,8 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     );
   }
 
+  // selection handled by _selectPrediction
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -439,6 +527,7 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                           contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         ),
                         onSubmitted: (_) => _searchDestination(),
+                        // Autocomplete is handled by the controller listener (debounced)
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -472,6 +561,34 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
               ],
             ),
           ),
+          // Search results dropdown
+          if (_searchResults.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var place in _searchResults.take(5)) // Limit to 5 suggestions
+                    ListTile(
+                      title: Text(place.name),
+                      subtitle: Text(place.displayName),
+                      onTap: () => _selectPrediction(place),
+                      dense: true,
+                    ),
+                ],
+              ),
+            ),
           Expanded(
             child: Stack(
               children: [
@@ -677,6 +794,7 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                       ),
                     ),
                   ),
+                // Suggestions dropdown moved above map
               ],
             ),
           ),

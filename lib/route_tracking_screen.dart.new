@@ -1,0 +1,110 @@
+  @override
+  void initState() {
+    super.initState();
+    _setupLocationAndPermissions();
+    _setupProximityService();
+    
+    // Subscribe to place search results
+    _placeSearchService.suggestions.listen((places) {
+      setState(() {
+        _searchResults = places;
+      });
+    });
+  }
+
+  void _selectPlace(Place place) {
+    setState(() {
+      _destinationPosition = LatLng(place.latitude, place.longitude);
+      _destinationController.text = place.name;
+      _searchResults = []; // Clear search results
+    });
+
+    // Update map view
+    _mapController.move(
+      _destinationPosition!,
+      _mapController.zoom,
+    );
+
+    // Get route to the selected place
+    _getRoute();
+  }
+
+  Widget _buildSearchBar() {
+    return Container(
+      padding: const EdgeInsets.all(8.0),
+      child: Column(
+        children: [
+          TextField(
+            controller: _destinationController,
+            onChanged: (query) {
+              _placeSearchService.searchWithDebounce(
+                query,
+                lat: _currentPosition.latitude,
+                lon: _currentPosition.longitude,
+              );
+            },
+            decoration: InputDecoration(
+              hintText: 'Enter destination',
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8.0),
+              ),
+              suffixIcon: _isSearching
+                  ? const CircularProgressIndicator()
+                  : IconButton(
+                      icon: const Icon(Icons.search),
+                      onPressed: () => _selectPlace(_searchResults.first),
+                    ),
+            ),
+          ),
+          if (_searchResults.isNotEmpty)
+            Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.3,
+              ),
+              margin: const EdgeInsets.only(top: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8.0),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    spreadRadius: 1,
+                    blurRadius: 3,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _searchResults.length,
+                itemBuilder: (context, index) {
+                  final place = _searchResults[index];
+                  return ListTile(
+                    leading: const Icon(Icons.location_on),
+                    title: Text(place.name),
+                    subtitle: Text(
+                      [
+                        place.city,
+                        place.state,
+                        place.country,
+                      ].where((e) => e != null).join(', '),
+                    ),
+                    onTap: () => _selectPlace(place),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _destinationController.dispose();
+    _locationUpdateTimer?.cancel();
+    _placeSearchService.dispose();
+    super.dispose();
+  }

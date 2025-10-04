@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:location/location.dart';
+import 'services/enhanced_proximity_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -17,6 +18,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   MapController? _mapController;
   LatLng _currentPosition = const LatLng(12.9716, 77.5946); // Default: Bangalore
+  
+  final EnhancedProximityService _proximityService = EnhancedProximityService();
+  List<DetectedDevice> _nearbyVehicles = [];
+  StreamSubscription? _vehiclesSubscription;
 
   @override
   void initState() {
@@ -25,16 +30,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkLocationPermission();
     });
+
+    // Start proximity detection
+    _proximityService.startScanning(context);
+    _vehiclesSubscription = _proximityService.nearbyVehicles.listen((vehicles) {
+      setState(() {
+        _nearbyVehicles = vehicles;
+        _updateMarkers();
+      });
+    });
   }
 
   @override
   void dispose() {
     _mapController?.dispose();
+    _vehiclesSubscription?.cancel();
+    _proximityService.dispose();
     super.dispose();
   }
 
-  // Markers for BLE-detected vehicles
+  // Markers for nearby vehicles
   final List<Marker> _markers = [];
+
+  void _updateMarkers() {
+    setState(() {
+      _markers.clear();
+      for (var vehicle in _nearbyVehicles) {
+        // Show markers for devices within 3m range
+        if (vehicle.distance <= 3.0) {
+          // Calculate approximate position based on distance and bearing
+          // This is a simplified calculation for demonstration
+          double lat = _currentPosition.latitude + (vehicle.distance * 0.00001);
+          double lng = _currentPosition.longitude + (vehicle.distance * 0.00001);
+          
+          _markers.add(
+            Marker(
+              width: 30,
+              height: 30,
+              point: LatLng(lat, lng),
+              child: Icon(
+                Icons.warning_rounded,
+                // Use red for Bluetooth 6.0 devices, orange for BLE
+                color: vehicle.isBluetooth6 ? Colors.red : Colors.red[700],
+                size: 30,
+              ),
+            ),
+          );
+        }
+      }
+    });
+  }
 
   // Status indicators
   bool gpsOn = true;

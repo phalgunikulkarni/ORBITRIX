@@ -18,11 +18,12 @@ dependencies:
   geocoding: ^2.1.1  # Keep major version for compatibility
   http: ^1.1.0
   intl: ^0.18.1
+  google_maps_webservice2: ^1.0.5 # For null-safe programmatic access to Google Places API
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
