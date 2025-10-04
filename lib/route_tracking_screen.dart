@@ -250,17 +250,7 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   }
 
   void _showTurnNotification(String instruction) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          instruction,
-          style: const TextStyle(fontSize: 16),
-        ),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        duration: const Duration(seconds: 5),
-      ),
-    );
+    // Direction alerts are now shown in the top bar only
   }
 
   Future<void> _searchDestination() async {
@@ -500,8 +490,10 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                     // Vehicle markers layer
                     MarkerLayer(
                       markers: [
-                        // Detected device markers (only for moving vehicles)
-                        ..._nearbyDevices.where((device) => device.isMoving).map((device) {
+                        // Only show markers for vehicles within 5 meters
+                        ..._nearbyDevices.where((device) => 
+                          device.isMoving && device.distance <= 5.0
+                        ).map((device) {
                           // Calculate approximate position based on distance and movement
                           final angle = Random().nextDouble() * 2 * pi;
                           final lat = _currentPosition.latitude + 
@@ -509,36 +501,56 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                           final lng = _currentPosition.longitude + 
                               (device.distance * sin(angle)) / (111111 * cos(_currentPosition.latitude * pi / 180));
                           
+                          // Determine risk level based on distance
+                          final bool isImmediateRisk = device.distance < 2.0;
+                          final String riskLevel = isImmediateRisk 
+                              ? 'IMMEDIATE RISK!' 
+                              : 'Warning: Vehicle Nearby';
+                          
                           return Marker(
                             point: LatLng(lat, lng),
-                            width: 30,
-                            height: 30,
+                            width: isImmediateRisk ? 40 : 30, // Larger marker for immediate risk
+                            height: isImmediateRisk ? 40 : 30,
                             child: GestureDetector(
                               onTap: () {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      'Moving Vehicle Detected\n'
-                                      'Name: ${device.device.platformName}\n'
+                                      '$riskLevel\n'
                                       'Distance: ${device.distance.toStringAsFixed(1)}m\n'
                                       'Signal Strength: ${device.rssi} dBm'
                                     ),
+                                    backgroundColor: isImmediateRisk 
+                                        ? Colors.red 
+                                        : Colors.orange,
                                     duration: const Duration(seconds: 2),
                                   ),
                                 );
                               },
                               child: Container(
                                 decoration: BoxDecoration(
-                                  color: device.distance >= 1.0 && device.distance <= 2.0
-                                      ? Colors.red.withOpacity(0.7)
-                                      : Colors.orange.withOpacity(0.7),
+                                  color: isImmediateRisk
+                                      ? Colors.red.withOpacity(0.9)
+                                      : Colors.yellow.withOpacity(0.8),
                                   shape: BoxShape.circle,
-                                  border: Border.all(color: Colors.white, width: 2),
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: isImmediateRisk ? 3 : 2,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: isImmediateRisk 
+                                          ? Colors.red.withOpacity(0.5)
+                                          : Colors.yellow.withOpacity(0.3),
+                                      blurRadius: 8,
+                                      spreadRadius: 2,
+                                    ),
+                                  ],
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.directions_car,
                                   color: Colors.white,
-                                  size: 20,
+                                  size: isImmediateRisk ? 24 : 20,
                                 ),
                               ),
                             ),
