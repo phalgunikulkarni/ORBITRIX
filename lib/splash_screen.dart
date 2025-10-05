@@ -68,12 +68,12 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 800),
     );
 
-    // Car animations - moving towards each other from screen edges to center
-    _leftCarAnimation = Tween<double>(begin: -0.15, end: 0.45).animate(
+    // Car animations - moving towards each other from screen edges to exact center
+    _leftCarAnimation = Tween<double>(begin: -0.05, end: 0.48).animate(
       CurvedAnimation(parent: _leftCarController, curve: Curves.easeInOut),
     );
 
-    _rightCarAnimation = Tween<double>(begin: 1.05, end: 0.55).animate(
+    _rightCarAnimation = Tween<double>(begin: 1.05, end: 0.52).animate(
       CurvedAnimation(parent: _rightCarController, curve: Curves.easeInOut),
     );
 
@@ -234,7 +234,7 @@ class _SplashScreenState extends State<SplashScreen>
                       animation: _leftCarAnimation,
                       builder: (context, child) {
                         return Positioned(
-                          left: MediaQuery.of(context).size.width * _leftCarAnimation.value,
+                          left: MediaQuery.of(context).size.width * _leftCarAnimation.value - 28,
                           top: 80,
                           child: Transform.rotate(
                             angle: 0,
@@ -268,7 +268,7 @@ class _SplashScreenState extends State<SplashScreen>
                       animation: _rightCarAnimation,
                       builder: (context, child) {
                         return Positioned(
-                          left: MediaQuery.of(context).size.width * _rightCarAnimation.value,
+                          left: MediaQuery.of(context).size.width * _rightCarAnimation.value - 28,
                           top: 80,
                           child: Transform.rotate(
                             angle: math.pi,
@@ -303,7 +303,7 @@ class _SplashScreenState extends State<SplashScreen>
                       builder: (context, child) {
                         return Positioned(
                           left: MediaQuery.of(context).size.width * 0.5 - 30,
-                          top: 70,
+                          top: 80,
                           child: Transform.scale(
                             scale: _collisionScale.value,
                             child: Container(
@@ -337,7 +337,7 @@ class _SplashScreenState extends State<SplashScreen>
                       builder: (context, child) {
                         return Positioned(
                           left: MediaQuery.of(context).size.width * 0.5 - 60,
-                          top: 40,
+                          top: 50,
                           child: Opacity(
                             opacity: _alertOpacity.value,
                             child: Transform.scale(
@@ -365,7 +365,7 @@ class _SplashScreenState extends State<SplashScreen>
                       builder: (context, child) {
                         return Positioned(
                           left: MediaQuery.of(context).size.width * 0.5 - 80,
-                          top: 20,
+                          top: 30,
                           child: Opacity(
                             opacity: _alertOpacity.value * 0.6,
                             child: Transform.scale(

@@ -5,6 +5,15 @@ allprojects {
     }
 }
 
+// Ensure all Java compilation uses Java 11
+allprojects {
+    tasks.withType<JavaCompile> {
+        options.compilerArgs.addAll(listOf("-Xlint:-options"))
+        sourceCompatibility = "11"
+        targetCompatibility = "11"
+    }
+}
+
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory
         .dir("../../build")
