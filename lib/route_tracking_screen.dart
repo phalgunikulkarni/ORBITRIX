@@ -8,15 +8,17 @@ import 'services/proximity_alert_service.dart';
 import 'services/smart_collision_detection_service.dart';
 import 'services/traffic_congestion_detection_service.dart';
 import 'models/place_model.dart';
-import 'theme/app_theme.dart';
+
 import 'widgets/modern_widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geocoding/geocoding.dart' hide Location;
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:location/location.dart';
+import 'package:location/location.dart' as loc;
 import 'services/google_places_service.dart';
+import 'services/nasa_enhanced_weather_service.dart';
+import 'widgets/weather_widget.dart';
 
 class RouteTrackingScreen extends StatefulWidget {
   const RouteTrackingScreen({super.key});
@@ -46,9 +48,14 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   List<DetectedVehicle> _smartDetectedVehicles = [];
   List<RouteSegment> _trafficSegments = [];
 
+  // Weather-related fields
+  WeatherData? _currentWeather;
+  bool _isLoadingWeather = false;
+
   // Services
   final SmartCollisionDetectionService _smartCollisionService = SmartCollisionDetectionService();
   final TrafficCongestionDetectionService _trafficService = TrafficCongestionDetectionService();
+  final NasaEnhancedWeatherService _weatherService = NasaEnhancedWeatherService();
 
   // Google Places API Key
   final String _googleApiKey = 'AIzaSyCx8UgZDXtJ-w9RoIl2-QHn8FEl3wtch5o';
@@ -259,6 +266,9 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
     _checkAndRequestPermissions();
     // Initialize Google Places
     _placesService = GooglePlacesService(_googleApiKey);
+    
+    // Test weather loading immediately
+    _testWeatherDisplay();
 
     // Listen to destination input and fetch suggestions with debounce
     _destinationController.addListener(() {
@@ -314,11 +324,15 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   }
 
   void _startLocationUpdates() {
-    // Update location every 2 seconds
-    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
-      await _updateCurrentLocation();
-      if (_destinationPosition != null) {
-        _updateNavigationProgress();
+    // Update location every 3 seconds to reduce battery drain and improve performance
+    _locationUpdateTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      try {
+        await _updateCurrentLocation();
+        if (_destinationPosition != null) {
+          _updateNavigationProgress();
+        }
+      } catch (e) {
+        print('Error in location update: $e');
       }
     });
     // Get initial location
@@ -352,7 +366,7 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
   }
 
   Future<void> _updateCurrentLocation() async {
-    final location = Location();
+    final location = loc.Location();
     try {
       final userLocation = await location.getLocation();
       if (!mounted) return;
@@ -363,20 +377,34 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
       );
 
       // Calculate bearing for smooth rotation
+      double? newBearing;
       if (_currentPosition != newPosition) {
-        _bearing = _calculateBearing(_currentPosition, newPosition);
+        newBearing = _calculateBearing(_currentPosition, newPosition);
       }
 
       setState(() {
         _currentPosition = newPosition;
+        if (newBearing != null) {
+          _bearing = newBearing;
+        }
       });
 
       // If we have a destination, update the route and recenter map
+      // Only update map if position changed significantly (> 5 meters)
       if (_destinationPosition != null) {
-        _updateRoute();
-        // Center and rotate map to follow current location
-        _mapController.move(_currentPosition, _mapController.zoom);
-        _mapController.rotate(_bearing);
+        final distanceFromLastUpdate = _calculateDistance(
+          _currentPosition.latitude, _currentPosition.longitude,
+          newPosition.latitude, newPosition.longitude
+        );
+        
+        if (distanceFromLastUpdate > 0.005) { // ~5 meters
+          _updateRoute();
+          // Center and rotate map to follow current location
+          _mapController.move(_currentPosition, _mapController.zoom);
+          if (newBearing != null) {
+            _mapController.rotate(_bearing);
+          }
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -501,11 +529,14 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
       final destination = LatLng(detail.lat, detail.lng);
       setState(() {
         _destinationController.text = detail.name;
-            _searchResults = [];
+        _searchResults = []; // Clear search results
         _isSearching = false;
         _destinationPosition = destination;
         _currentDirectionIndex = 0;
       });
+      
+      // Hide keyboard and clear focus to dismiss suggestions
+      FocusScope.of(context).unfocus();
 
       await _updateRoute();
       _fitMapToBounds();
@@ -638,6 +669,9 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
         _distance = _formatDistance(distance);
         _eta = _formatDuration(duration);
       });
+
+      // Load weather data for the route
+      _loadRouteWeatherData();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -706,6 +740,78 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
 
   // selection handled by _selectPrediction
 
+  /// Load weather data for route points using NASA Enhanced Weather Service
+  Future<void> _loadRouteWeatherData() async {
+    print('DEBUG: _loadRouteWeatherData called');
+    print('DEBUG: _routePoints.length = ${_routePoints.length}');
+    print('DEBUG: Current position = ${_currentPosition.latitude}, ${_currentPosition.longitude}');
+    
+    if (_routePoints.isEmpty) {
+      print('DEBUG: No route points, returning early');
+      return;
+    }
+
+    setState(() {
+      _isLoadingWeather = true;
+    });
+    print('DEBUG: Set _isLoadingWeather = true');
+
+    try {
+      // Convert LatLng to Location for weather service
+      final currentLocation = Location(
+        latitude: _currentPosition.latitude, 
+        longitude: _currentPosition.longitude
+      );
+      print('DEBUG: Getting weather for current location: ${currentLocation.latitude}, ${currentLocation.longitude}');
+      _currentWeather = await _weatherService.getWeatherForLocation(currentLocation);
+      print('DEBUG: Current weather obtained: ${_currentWeather?.temperature}°C, condition: ${_currentWeather?.condition}, source: ${_currentWeather?.source}');
+      
+      // No need to load weather for all route points - just current location is enough
+      // This improves performance and reduces API calls
+      print('DEBUG: Weather loading completed for current location only');
+      
+    } catch (e) {
+      print('ERROR loading weather data: $e');
+      print('ERROR stack trace: ${StackTrace.current}');
+    } finally {
+      if (mounted) {
+        print('DEBUG: Setting _isLoadingWeather = false');
+        setState(() {
+          _isLoadingWeather = false;
+        });
+      }
+    }
+  }
+
+  /// Check for severe weather conditions and show alerts
+
+
+
+
+  /// Test weather display immediately on app start
+  Future<void> _testWeatherDisplay() async {
+    print('Testing weather display...');
+    
+    // Wait a bit for the app to initialize
+    await Future.delayed(Duration(seconds: 2));
+    
+    // Load weather for current location
+    final currentLocation = Location(
+      latitude: _currentPosition.latitude, 
+      longitude: _currentPosition.longitude
+    );
+    
+    try {
+      final weather = await _weatherService.getWeatherForLocation(currentLocation);
+      setState(() {
+        _currentWeather = weather;
+      });
+      print('Weather loaded successfully: ${weather.condition}, ${weather.temperature}°C');
+    } catch (e) {
+      print('Error testing weather display: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -746,7 +852,8 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                   hintText: 'Enter destination address',
                   isLoading: _isSearching,
                   onSubmitted: _searchDestination,
-                  suggestions: _searchResults.take(5).map((result) => 
+                  suggestions: (_searchResults.isNotEmpty && _destinationController.text.isNotEmpty && _destinationPosition == null) 
+                    ? _searchResults.take(5).map((result) => 
                     ListTile(
                       leading: Container(
                         padding: const EdgeInsets.all(8),
@@ -768,86 +875,251 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                       ),
                       onTap: () => _selectPrediction(result),
                     ),
-                  ).toList(),
+                  ).toList()
+                  : [], // Empty list when no suggestions should be shown
                 ),
-                // Control buttons row - side by side
+                // Control buttons row - scrollable to prevent overflow
                 const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // START/Navigation Status Button
-                    if (_destinationPosition != null && !_isNavigationStarted)
-                      PremiumButton(
-                        onPressed: _startNavigation,
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF10B981), Color(0xFF059669)],
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 8),
+                      // START/Navigation Status Button
+                      if (_destinationPosition != null && !_isNavigationStarted)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: PremiumButton(
+                            onPressed: _startNavigation,
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF10B981), Color(0xFF059669)],
+                            ),
+                            elevation: 6,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.navigation, color: Colors.white, size: 14),
+                                const SizedBox(width: 4),
+                                const Text('START', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
                         ),
-                        elevation: 6,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.navigation, color: Colors.white, size: 14),
-                            const SizedBox(width: 6),
-                            const Text('START', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                          ],
+                      
+                      // Navigation Active Status
+                      if (_isNavigationStarted)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.navigation, size: 12, color: Colors.white),
+                                const SizedBox(width: 4),
+                                const Text('ACTIVE', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    
-                    // Navigation Active Status
-                    if (_isNavigationStarted)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]),
-                          borderRadius: BorderRadius.circular(16),
+                      
+                      // Collision/Traffic Status Indicators
+                      if (_smartDetectedVehicles.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              gradient: _getHighestRiskGradient(),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(_getHighestRiskIcon(), size: 12, color: Colors.white),
+                                const SizedBox(width: 3),
+                                Text('${_smartDetectedVehicles.length}', 
+                                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.navigation, size: 14, color: Colors.white),
-                            const SizedBox(width: 6),
-                            const Text('ACTIVE', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                          ],
+                      
+                      // Traffic Status - Always show when navigation is active
+                      if (_isNavigationStarted)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () {
+                              // Show traffic details or trigger manual traffic check
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Traffic Status'),
+                                  content: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text('Traffic segments: ${_trafficSegments.length}'),
+                                      const SizedBox(height: 8),
+                                      if (_trafficSegments.isNotEmpty)
+                                        ...(_trafficSegments.map((segment) => 
+                                          Text('${segment.congestionLevel.toString().split('.').last}: ${segment.averageSpeed.toStringAsFixed(1)} km/h')
+                                        ))
+                                      else
+                                        const Text('No traffic congestion detected\nTraffic is flowing smoothly'),
+                                    ],
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Close'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                gradient: _trafficSegments.isNotEmpty 
+                                  ? _getWorstTrafficGradient()
+                                  : const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)]), // Green for free traffic
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.traffic, size: 12, color: Colors.white),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _trafficSegments.isNotEmpty ? 'Traffic' : 'Clear',
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
-                    
-                    // Collision/Traffic Status Indicators
-                    if (_smartDetectedVehicles.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          gradient: _getHighestRiskGradient(),
-                          borderRadius: BorderRadius.circular(14),
+
+                      // Weather Widget
+                      if (_currentWeather != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Current Weather'),
+                                  content: WeatherWidget(
+                                    weather: _currentWeather!,
+                                    isCompact: false,
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('Close'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(context);
+                                        _loadRouteWeatherData(); // Refresh weather
+                                      },
+                                      child: const Text('Refresh'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    NasaEnhancedWeatherService.getSeverityColor(_currentWeather!.severity).withOpacity(0.8),
+                                    NasaEnhancedWeatherService.getSeverityColor(_currentWeather!.severity).withOpacity(0.6),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  NasaEnhancedWeatherService.getWeatherIcon(_currentWeather!.condition, _currentWeather!.severity),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${_currentWeather!.temperature.round()}°',
+                                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(_getHighestRiskIcon(), size: 12, color: Colors.white),
-                            const SizedBox(width: 4),
-                            Text('${_smartDetectedVehicles.length}', 
-                              style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                          ],
+
+                      // Weather Loading Indicator
+                      if (_isLoadingWeather)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(colors: [Color(0xFF6B73FF), Color(0xFF9575FF)]),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Text('Weather', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    
-                    if (_trafficSegments.isNotEmpty && _isNavigationStarted)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          gradient: _getWorstTrafficGradient(),
-                          borderRadius: BorderRadius.circular(16),
+                        
+                      // Debug Weather Button (only show if no weather data)
+                      if (_currentWeather == null && !_isLoadingWeather)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: GestureDetector(
+                            onTap: () {
+                              print('Debug: Manual weather load triggered');
+                              _loadRouteWeatherData();
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(colors: [Color(0xFF64748B), Color(0xFF475569)]),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.refresh, size: 12, color: Colors.white),
+                                  const SizedBox(width: 4),
+                                  const Text('Weather', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.traffic, size: 14, color: Colors.white),
-                            const SizedBox(width: 6),
-                            const Text('Traffic', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                  ],
+                        
+                      const SizedBox(width: 8), // Final spacing
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1005,6 +1277,69 @@ class _RouteTrackingScreenState extends State<RouteTrackingScreen> {
                           ),
                           // Traffic congestion segments (on top)
                           ..._buildTrafficPolylines(),
+                        ],
+                      ),
+
+                    // Single animated weather marker at current location
+                    if (_currentWeather != null && _isNavigationStarted)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _currentPosition,
+                            width: 60,
+                            height: 60,
+                            child: GestureDetector(
+                              onTap: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: const Text('Current Weather'),
+                                    content: WeatherWidget(
+                                      weather: _currentWeather!,
+                                      isCompact: false,
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('Close'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () {
+                                          Navigator.pop(context);
+                                          _loadRouteWeatherData();
+                                        },
+                                        child: const Text('Refresh'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(seconds: 2),
+                                curve: Curves.easeInOut,
+                                width: 50,
+                                height: 50,
+                                decoration: BoxDecoration(
+                                  color: NasaEnhancedWeatherService.getSeverityColor(_currentWeather!.severity).withOpacity(0.9),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 3),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: NasaEnhancedWeatherService.getSeverityColor(_currentWeather!.severity).withOpacity(0.3),
+                                      blurRadius: 10,
+                                      spreadRadius: 5,
+                                    ),
+                                  ],
+                                ),
+                                child: Center(
+                                  child: NasaEnhancedWeatherService.getWeatherIcon(
+                                    _currentWeather!.condition, 
+                                    _currentWeather!.severity
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     // Destination marker layer

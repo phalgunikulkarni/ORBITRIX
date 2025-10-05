@@ -68,12 +68,12 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 800),
     );
 
-    // Car animations - moving towards each other
-    _leftCarAnimation = Tween<double>(begin: -0.5, end: 0.35).animate(
+    // Car animations - moving towards each other from screen edges to center
+    _leftCarAnimation = Tween<double>(begin: -0.15, end: 0.45).animate(
       CurvedAnimation(parent: _leftCarController, curve: Curves.easeInOut),
     );
 
-    _rightCarAnimation = Tween<double>(begin: 1.5, end: 0.65).animate(
+    _rightCarAnimation = Tween<double>(begin: 1.05, end: 0.55).animate(
       CurvedAnimation(parent: _rightCarController, curve: Curves.easeInOut),
     );
 
