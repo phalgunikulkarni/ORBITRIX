@@ -1,56 +1,154 @@
-# ORBITRIX
+ORBITRIX 🚗⚠️
 
-ORBITRIX is a Vehicle-to-Vehicle (V2V) Safety Alert app built using Flutter. It uses smartphone sensors, Bluetooth Low Energy (BLE), GPS, and cloud integration to detect and share real-time road hazard alerts and improve driver safety.
+Vehicle-to-Vehicle (V2V) Road Safety & Navigation Platform
 
-## Features
+ORBITRIX is a Flutter-based Vehicle-to-Vehicle (V2V) safety and navigation application designed to enhance road safety using smartphones as intelligent sensing nodes. It leverages GPS, Bluetooth Low Energy (BLE), motion sensors, and cloud intelligence to detect, share, and visualize real-time road hazards and nearby vehicle risks.
 
-- Real-time detection and alerting of nearby vehicles using BLE.
-- Pothole and sudden brake detection via accelerometer and gyroscope sensors.
-- Interactive maps with OpenStreetMap to visualize nearby vehicles and hazards.
-- Integration with NASA datasets for environmental hazard validation.
-- Traffic congestion prediction using Kaggle machine learning models.
-- Destination search powered by Google Places API.
+The system demonstrates how low-cost consumer devices can complement or augment traditional vehicle safety systems, making advanced road awareness accessible even in resource-constrained environments.
 
-## Getting Started
+🚀 Key Features
+🔹 Vehicle-to-Vehicle (V2V) Safety
 
-### Prerequisites
+Real-time detection of nearby vehicles using BLE and GPS
 
-- Flutter SDK (version >= 2.17.0 < 4.0.0)
-- Android Studio or Visual Studio Code
-- An Android or iOS device/emulator
+Distance-based proximity alerts with visual, vibration, and audio warnings
 
-### Installation
+Adaptive risk levels based on distance, motion, and confidence scoring
 
-1. Clone the repository: https://github.com/phalgunikulkarni/ORBITRIX.git
- 
-2. Install dependencies
+🔹 Road Hazard Detection
 
-3. Add your Firebase configuration files:
+Pothole and sudden braking detection using accelerometer and gyroscope data
 
-- Place `google-services.json` in `android/app/`
-- Place `GoogleService-Info.plist` in `ios/Runner/` (if iOS support added)
+Crowdsourced hazard sharing between nearby devices
 
-4. Run the app: flutter run
+Confidence-based filtering to reduce false positives
+
+🔹 Intelligent Navigation
+
+Interactive maps using OpenStreetMap
+
+Route visualization with live vehicle and hazard overlays
+
+Destination search and autocomplete powered by Google Places API
+
+🔹 Environmental Awareness
+
+Integration with NASA datasets for weather and environmental hazard insights
+
+Context-aware alerts for rain, fog, poor visibility, and adverse conditions
+
+🔹 Traffic Intelligence
+
+Traffic congestion estimation using machine learning models trained on Kaggle datasets
+
+Route-level congestion awareness to support safer driving decisions
+
+🧠 Future Scope & Vision
+🚘 Driverless & Assisted Vehicles
+
+ORBITRIX can act as a software-layer safety companion for autonomous and semi-autonomous vehicles
+
+Provides redundancy to onboard sensors (LiDAR/Radar) through cooperative V2V awareness
+
+Enables safer navigation in GPS-challenged or sensor-limited environments
+
+🌐 IoT & Smart Infrastructure Integration
+
+Can be extended to integrate with roadside IoT devices (smart traffic lights, road sensors)
+
+Mobile phones can act as temporary base stations for indoor or urban canyon navigation
+
+Supports Vehicle-to-Infrastructure (V2I) communication for smart city applications
+
+🛠️ Tech Stack
+
+Frontend: Flutter (Android/iOS)
+
+Mapping: OpenStreetMap (via FlutterMap)
+
+Location & Sensors: GPS, Accelerometer, Gyroscope
+
+Connectivity: Bluetooth Low Energy (BLE)
+
+APIs & Data:
+
+Google Places API
+
+NASA environmental datasets
+
+Kaggle ML traffic models
+
+Backend (Optional): Firebase / Node.js REST services
+
+📦 Getting Started
+Prerequisites
+
+Flutter SDK (>= 2.17.0, < 4.0.0)
+
+Android Studio or VS Code
+
+Android/iOS device or emulator
+
+Installation
+
+Clone the repository:
+
+git clone https://github.com/phalgunikulkarni/ORBITRIX.git
+cd ORBITRIX
 
 
-## Usage
+Install dependencies:
 
-- Enable Bluetooth and Location permissions when prompted.
-- The app will detect nearby devices and listen for hazard alerts.
-- View real-time vehicle locations and hazards on the map.
-- Use the search bar powered by Google Places to find destinations.
-
-## Project Structure
-
-- `/lib` - Flutter Dart source code
-- `/android` and `/ios` - Platform-specific build files and configurations
-- `/assets` - Static assets like images and JSON files
-- `/scripts` - Data processing or ML scripts (if any)
-
-## Data Sources
-
-- NASA environmental and hazard datasets
-- Kaggle traffic congestion algorithms
-- Google Places API
+flutter pub get
 
 
+Add Firebase configuration (optional but recommended):
+
+android/app/google-services.json
+
+ios/Runner/GoogleService-Info.plist
+
+Run the app:
+
+flutter run
+
+📱 Usage
+
+Grant Bluetooth and Location permissions when prompted
+
+Start navigation by selecting a destination
+
+View nearby vehicles, hazards, traffic, and weather on the map
+
+Receive real-time alerts for proximity risks and road conditions
+
+📂 Project Structure
+/lib        → Flutter source code
+/android    → Android platform files
+/ios        → iOS platform files
+/assets     → Static assets and data files
+/scripts    → Data processing / ML scripts (if any)
+
+📊 Data Sources
+
+NASA – Environmental and weather datasets
+
+Kaggle – Traffic congestion and ML models
+
+Google Places API – Destination search and autocomplete
+
+🎯 Why ORBITRIX?
+
+ORBITRIX demonstrates how software-first, cooperative sensing can improve road safety without relying on expensive hardware. It is suitable for hackathons, research, smart mobility prototypes, and future integration into autonomous and connected vehicle ecosystems.
+
+If you want, I can also:
+
+Shorten this for a hackathon submission
+
+Add architecture diagrams
+
+Rewrite it in a research-paper tone
+
+Create a NASA Space Apps–style abstract
+
+Just tell me.
