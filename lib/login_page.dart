@@ -3,6 +3,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'signup_page.dart';
 import 'vehicle_info_page.dart';
 import 'bluetooth_helper.dart';
+import 'services/authentication_service.dart';
+import 'services/storage_service.dart';
+import 'dashboard_screen_google_maps.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -15,6 +18,112 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _loginIdController = TextEditingController();
   final _passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _loginIdController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    // Validate credentials against saved data
+    final result = await AuthenticationService.login(
+      _loginIdController.text.trim(),
+      _passwordController.text,
+    );
+
+    if (!mounted) return;
+
+    if (!result['success']) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result['message']),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    // Check if vehicle info exists
+    final vehicleInfo = await StorageService.getVehicleInfo();
+    if (vehicleInfo == null) {
+      // No vehicle info yet, go to vehicle info page
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const VehicleInfoPage()),
+      );
+      return;
+    }
+
+    // Vehicle info exists, ask to enable Bluetooth & GPS
+    if (!mounted) return;
+    final navigator = Navigator.of(context);
+
+    final proceed = await showDialog<bool>(
+      context: navigator.context,
+      builder: (c) => AlertDialog(
+        title: const Text('Enable Bluetooth & GPS'),
+        content: const Text(
+            'This app needs Bluetooth and GPS enabled to work properly. Would you like to enable them now?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(c).pop(false),
+              child: const Text('No')),
+          TextButton(
+              onPressed: () => Navigator.of(c).pop(true),
+              child: const Text('Yes')),
+        ],
+      ),
+    );
+
+    if (proceed != true) {
+      if (!mounted) return;
+      // Still proceed to dashboard even if user says no
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+            builder: (context) => DashboardScreenGoogleMaps()),
+      );
+      return;
+    }
+
+    // Enable Bluetooth (requests permissions too)
+    final btOk = await enableBluetooth(navigator);
+
+    // Check location permission / service for GPS
+    final locStatus = await Permission.locationWhenInUse.request();
+    if (!locStatus.isGranted && mounted) {
+      await showDialog<void>(
+        context: navigator.context,
+        builder: (c) => AlertDialog(
+          title: const Text('Location permission required'),
+          content: const Text(
+              'Location permission is required for GPS functionality. Please grant it in app settings.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(c).pop(),
+                child: const Text('OK')),
+          ],
+        ),
+      );
+    }
+
+    // Proceed to dashboard
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+          builder: (context) => DashboardScreenGoogleMaps()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,66 +160,20 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 24),
                   ElevatedButton(
-                    onPressed: () async {
-                      if (!_formKey.currentState!.validate()) return;
-
-                      if (!mounted) return;
-                      final navigator = Navigator.of(context);
-
-                      // Ask user to enable Bluetooth & GPS after login
-                      final proceed = await showDialog<bool>(
-                        context: navigator.context,
-                        builder: (c) => AlertDialog(
-                          title: const Text('Enable Bluetooth & GPS'),
-                          content: const Text(
-                              'This app needs Bluetooth and GPS enabled to work properly. Would you like to enable them now?'),
-                          actions: [
-                            TextButton(
-                                onPressed: () => Navigator.of(c).pop(false),
-                                child: const Text('No')),
-                            TextButton(
-                                onPressed: () => Navigator.of(c).pop(true),
-                                child: const Text('Yes')),
-                          ],
-                        ),
-                      );
-
-                      if (proceed != true) return;
-
-                      // Enable Bluetooth (requests permissions too)
-                      final btOk = await enableBluetooth(navigator);
-
-                      // Check location permission / service for GPS
-                      final locStatus = await Permission.locationWhenInUse.request();
-                      if (!locStatus.isGranted && mounted) {
-                        await showDialog<void>(
-                          context: navigator.context,
-                          builder: (c) => AlertDialog(
-                            title: const Text('Location permission required'),
-                            content: const Text(
-                                'Location permission is required for GPS functionality. Please grant it in app settings.'),
-                            actions: [
-                              TextButton(
-                                  onPressed: () => Navigator.of(c).pop(),
-                                  child: const Text('OK')),
-                            ],
-                          ),
-                        );
-                      }
-
-                      // If Bluetooth and location are OK, proceed
-                      if (!mounted) return;
-                      if (btOk && locStatus.isGranted) {
-                        navigator.pushReplacement(
-                          MaterialPageRoute(
-                              builder: (context) => const VehicleInfoPage()),
-                        );
-                      }
-                    },
-                    child: const Padding(
-                      padding:
-                          EdgeInsets.symmetric(vertical: 12.0, horizontal: 40),
-                      child: Text("Login", style: TextStyle(fontSize: 18)),
+                    onPressed: _isLoading ? null : _handleLogin,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12.0, horizontal: 40),
+                      child: _isLoading
+                          ? const SizedBox(
+                              height: 24,
+                              width: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : const Text("Login",
+                              style: TextStyle(fontSize: 18)),
                     ),
                   ),
                 ],

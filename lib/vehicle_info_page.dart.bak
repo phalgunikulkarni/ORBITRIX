@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'dashboard_screen_google_maps.dart';
-import 'models/vehicle_info_model.dart';
-import 'services/storage_service.dart';
 
 class VehicleInfoPage extends StatefulWidget {
   const VehicleInfoPage({super.key});
@@ -15,8 +13,6 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
   String? _selectedCategory;
   String? _selectedVehicleType;
   String? _selectedSUVCategory;
-  bool _isLoading = false;
-
   final List<String> _suvCategories = [
     'Compact',
     'Mid-Size',
@@ -82,68 +78,6 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
     ],
   };
 
-  Future<void> _saveAndContinue() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    if (_selectedCategory == null || _selectedVehicleType == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select both vehicle category and type'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    if (_selectedVehicleType == 'SUV (Sport Utility Vehicle)' && _selectedSUVCategory == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select SUV category'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    setState(() => _isLoading = true);
-
-    // Create and save vehicle info
-    final vehicleInfo = VehicleInfo(
-      category: _selectedCategory!,
-      vehicleType: _selectedVehicleType!,
-      suvCategory: _selectedSUVCategory,
-    );
-
-    final saved = await StorageService.saveVehicleInfo(vehicleInfo);
-
-    if (!mounted) return;
-    if (saved) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Vehicle details saved'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-              builder: (context) => DashboardScreenGoogleMaps()),
-        );
-      });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to save vehicle details'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      setState(() => _isLoading = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -187,7 +121,7 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
                 validator: (value) => value == null ? "Select a vehicle category" : null,
               ),
               const SizedBox(height: 16),
-
+              
               // Vehicle Type Dropdown (shown only when category is selected)
               if (_selectedCategory != null)
                 DropdownButtonFormField<String>(
@@ -222,7 +156,7 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
                 ),
               if (_selectedCategory != null)
                 const SizedBox(height: 16),
-
+              
               // SUV Category Dropdown (shown only when SUV is selected)
               if (_selectedVehicleType == 'SUV (Sport Utility Vehicle)')
                 Column(
@@ -261,18 +195,36 @@ class _VehicleInfoPageState extends State<VehicleInfoPage> {
                   ],
                 ),
 
+            
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: _isLoading ? null : _saveAndContinue,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12.0, horizontal: 40),
-                  child: _isLoading
-                      ? const SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text("Save & Continue", style: TextStyle(fontSize: 18)),
+                onPressed: () {
+                  if (_formKey.currentState!.validate() && 
+                      _selectedCategory != null && 
+                      _selectedVehicleType != null &&
+                      (_selectedVehicleType != 'SUV (Sport Utility Vehicle)' || _selectedSUVCategory != null)) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => const DashboardScreenGoogleMaps()),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          _selectedVehicleType == 'SUV (Sport Utility Vehicle)' && _selectedSUVCategory == null
+                              ? 'Please select vehicle category, type, and SUV category'
+                              : 'Please select both vehicle category and type'
+                        ),
+                        duration: const Duration(seconds: 2),
+                      ),
+                    );
+                  }
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12.0, horizontal: 40),
+                  child:
+                      Text("Save & Continue", style: TextStyle(fontSize: 18)),
                 ),
               ),
             ],

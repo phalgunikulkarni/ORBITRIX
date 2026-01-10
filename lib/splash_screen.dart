@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'login_page.dart';
+import 'dashboard_screen_google_maps.dart';
+import 'services/storage_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -99,18 +101,61 @@ class _SplashScreenState extends State<SplashScreen>
     // Start animation sequence
     _startAnimationSequence();
 
-    // Navigate to login page after animations
-    Timer(const Duration(seconds: 5), () {
+    // Check if user is already logged in
+    _checkLoginStatus();
+  }
+
+  Future<void> _checkLoginStatus() async {
+    try {
+      final isLoggedIn = await StorageService.isLoggedIn();
+      
+      if (!mounted) return;
+
+      // Wait for animations to complete before navigation
+      await Future.delayed(const Duration(seconds: 5));
+
+      if (!mounted) return;
+
+      if (isLoggedIn) {
+        // User is already logged in, go to dashboard
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                DashboardScreenGoogleMaps(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 800),
+          ),
+        );
+      } else {
+        // User is not logged in, go to login page
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                const LoginPage(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 800),
+          ),
+        );
+      }
+    } catch (e) {
+      print('Error checking login status: $e');
+      if (!mounted) return;
+      // Default to login page on error
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => const LoginPage(),
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              const LoginPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return FadeTransition(opacity: animation, child: child);
           },
           transitionDuration: const Duration(milliseconds: 800),
         ),
       );
-    });
+    }
   }
 
   void _startAnimationSequence() async {
